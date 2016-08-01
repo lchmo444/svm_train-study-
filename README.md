@@ -1,4 +1,4 @@
-# svm_train-study-
+# svm_train(study)
 
 This is project with study
 
