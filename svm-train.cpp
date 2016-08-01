@@ -3,10 +3,23 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <string>
+#include <new>
+#include <thread>		//변경
+#include <mutex>		//변경
+
 #include "svm.h"
 #define Malloc(type,n) (type *)malloc((n)*sizeof(type))
+using namespace std;
+
+int a = 0;
+
+
 
 void print_null(const char *s) {}
+
+void thread_model(char *, char, svm_model *);		//변경
+std::mutex mtx;		//변경
 
 void exit_with_help()
 {
@@ -49,12 +62,13 @@ void exit_input_error(int line_num)
 }
 
 void parse_command_line(int argc, char **argv, char *input_file_name, char *model_file_name);
-void read_problem(const char *filename);
+void read_problem(char *filename);		//
 void do_cross_validation();
 
 struct svm_parameter param;		// set by parse_command_line
 struct svm_problem prob;		// set by read_problem
-struct svm_model *model;
+struct svm_model *model;		//첫번째 model
+struct svm_model *model_2;		//첫번째 model_2
 struct svm_node *x_space;
 int cross_validation;
 int nr_fold;
@@ -82,9 +96,53 @@ static char* readline(FILE *input)
 
 int main(int argc, char **argv)
 {
-	char input_file_name[1024];
-	char model_file_name[1024];
+
+	//char input_file_name[1024];		///뺀 부분
+	//char model_file_name[1024];
 	const char *error_msg;
+	                                                                                             
+
+	///////////////////////////////////////////////////////////
+	/////사용자 임의로 넣어 준 부분 // input 및 output 파일 들
+	string in_f = "\C:\\Users\\lee\\Desktop\\lee_chung_keun\\SVM material\\svm-train\\ConsoleApplication1\\Debug\\train.scale";
+	/*사용자 임의 폴더_1*/
+	//string in_f = "\C:\\lee\\train.scale";
+
+
+	char * input_file_name = new char[in_f.length() + 1];
+	strcpy(input_file_name, in_f.c_str());
+
+	string model_f = "\C:\\Users\\lee\\Desktop\\lee_chung_keun\\SVM material\\svm-train\\ConsoleApplication1\\Debug\\train_testver.model";
+
+	string model_f2 = "\C:\\Users\\lee\\Desktop\\lee_chung_keun\\SVM material\\svm-train\\ConsoleApplication1\\Debug\\train_2.model";		
+	
+	/*사용자 임의 폴더_2*/
+	//string model_f = "\C:\\lee\\train.model";
+	//string model_f2 = "\C:\\lee\\train_2.model";
+
+
+	char * model_file_name = new char[model_f.length() + 1];
+	char * model_file_name_2 = new char[model_f2.length() + 1];
+	strcpy(model_file_name, model_f.c_str());
+	strcpy(model_file_name_2, model_f2.c_str());
+	/////////////////////////////////////
+	//static char *argv[7] = {};
+	/*
+	if (a < 1)
+	{	
+		a = a + 4;
+		argc = 7;
+
+		argv[0] = "";
+		argv[3] = "-m 300";
+		argv[4] = "-c 32";
+		argv[1] = "-w1 0.00781245";
+		argv[2] = "-w-1 1";
+		argv[5] = (input_file_name);
+		argv[6] = (model_file_name);
+
+		main(argc, argv);
+	}*/
 
 	parse_command_line(argc, argv, input_file_name, model_file_name);
 	read_problem(input_file_name);
@@ -102,22 +160,74 @@ int main(int argc, char **argv)
 	}
 	else
 	{
-		model = svm_train(&prob, &param);
-		if (svm_save_model(model_file_name, model))
+
+
+		std::thread thread1(thread_model, model_file_name, 'a',model);
+		//std::thread thread2(thread_model, model_file_name_2, 'b', model_2);
+
+		//thread1.joinable();
+		//thread2.joinable();
+
+		thread1.join();
+		//thread2.join();
+		//thread1.detach();
+		//thread2.detach();
+		//model = (svm_model*)(thread1.join());
+
+	//	model = svm_train(&prob, &param);
+		//mtx.unlock();
+
+		//svm_save_model(model_file_name, model);
+		//svm_destroy_param(&param);
+
+	//	svm_free_and_destroy_model(&model);
+
+
+
+		//svm_save_model(model_file_name + '1', model);		//original
+
+		/*
+		if (svm_save_model(model_file_name+ '2', model_2))		//model 저장 부분	//original
 		{
 			fprintf(stderr, "can't save model to file %s\n", model_file_name);
 			exit(1);
-		}
-		svm_free_and_destroy_model(&model);
+		}*/
+		//svm_free_and_destroy_model(&model);
+		//svm_free_and_destroy_model(&model_2);
 	}
+	/*
 	svm_destroy_param(&param);
 	free(prob.y);
 	free(prob.x);
 	free(x_space);
 	free(line);
+	*/
+	
 
+	free(line);
 	return 0;
 }
+
+
+void thread_model(char *model_file_name, char a, svm_model *bbb)			//thread model 함수부분
+{
+	//mtx.lock();
+	bbb = svm_train(&prob, &param);
+	//mtx.unlock();
+
+	svm_save_model(model_file_name , bbb);
+	//svm_destroy_param(&param);
+
+	svm_free_and_destroy_model(&bbb);
+	svm_destroy_param(&param);
+	free(prob.y);
+	free(prob.x);
+	free(x_space);
+	//free(line);
+	
+}
+
+
 
 void do_cross_validation()
 {
@@ -163,25 +273,49 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
 	int i;
 	void(*print_func)(const char*) = NULL;	// default printing to stdout
 
+
+
+	double aa[2] = { 0.87079200, 1 };
 	// default values
 	param.svm_type = C_SVC;
 	param.kernel_type = RBF;
 	param.degree = 3;
-	param.gamma = 0;	// 1/num_features
+	//param.gamma = 0;	// 1/num_features	//original
+	param.gamma = 0.002066115;
 	param.coef0 = 0;
 	param.nu = 0.5;
-	param.cache_size = 100;
-	param.C = 1;
-	param.eps = 1e-3;
+	//param.cache_size = 100;
+	//param.C = 1;		//수정부분
+	//param.eps = 1e-3;	//original
+	param.eps = 1;	//사용자 부분
 	param.p = 0.1;
 	param.shrinking = 1;
 	param.probability = 0;
 	param.nr_weight = 0;
 	param.weight_label = NULL;
 	param.weight = NULL;
+	//변경 부분
+	param.nr_weight = 1;
+	param.weight_label = (int *)realloc(param.weight_label, sizeof(int)*param.nr_weight);
+	param.weight = (double *)realloc(param.weight, sizeof(double)*param.nr_weight);
+	param.weight_label[0] = 1;
+	param.weight[0] = aa[0];
+
+
+	param.nr_weight = 2;
+	param.weight_label = (int *)realloc(param.weight_label, sizeof(int)*param.nr_weight);
+	param.weight = (double *)realloc(param.weight, sizeof(double)*param.nr_weight);
+	param.weight_label[1] = -1;
+	param.weight[1] = aa[1];
+
+	param.cache_size = 900;
+	param.C = 32;
+
+
 	cross_validation = 0;
 
 	// parse options
+	/*
 	for (i = 1; i<argc; i++)
 	{
 		if (argv[i][0] != '-') break;
@@ -199,7 +333,7 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
 			param.degree = atoi(argv[i]);
 			break;
 		case 'g':
-			param.gamma = atof(argv[i]);
+			param.gamma = atof(argv[i - 1] + 3);
 			break;
 		case 'r':
 			param.coef0 = atof(argv[i]);
@@ -208,10 +342,12 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
 			param.nu = atof(argv[i]);
 			break;
 		case 'm':
-			param.cache_size = atof(argv[i]);
+			param.cache_size = atof(argv[i-1]+3);		//20160712 수정부분
+			//param.cache_size = 300;
 			break;
 		case 'c':
-			param.C = atof(argv[i]);
+			param.C = atof(argv[i - 1] + 3);
+			//param.C = 32;
 			break;
 		case 'e':
 			param.eps = atof(argv[i]);
@@ -249,17 +385,19 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
 			fprintf(stderr, "Unknown option: -%c\n", argv[i - 1][1]);
 			exit_with_help();
 		}
-	}
+	}*/
 
 	svm_set_print_string_function(print_func);
 
 	// determine filenames
-
+	
+	/*
 	if (i >= argc)
 		exit_with_help();
+		*/
+	//strcpy(input_file_name, argv[i]);
 
-	strcpy(input_file_name, argv[i]);
-
+	/*
 	if (i<argc - 1)
 		strcpy(model_file_name, argv[i + 1]);
 	else
@@ -270,16 +408,18 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
 		else
 			++p;
 		sprintf(model_file_name, "%s.model", p);
-	}
+	}*/
 }
 
 // read in a problem (in svmlight format)
 
-void read_problem(const char *filename)
+void read_problem(char *filename)	
 {
 	int max_index, inst_max_index, i;
 	size_t elements, j;
-	FILE *fp = fopen(filename, "r");
+	//FILE *fp;			//변경
+	FILE *fp = fopen(filename, "r");		//original
+	//fopen_s(&fp, filename, "r");
 	char *endptr;
 	char *idx, *val, *label;
 

@@ -7,7 +7,15 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <locale.h>
+#include <time.h>		//변경
+#include <thread>		//변경
+#include <mutex>		//변경
+#include <omp.h>		//변경
+
 #include "svm.h"
+
+std::mutex mtx_lock;	//변경
+
 int libsvm_version = LIBSVM_VERSION;
 typedef float Qfloat;
 typedef signed char schar;
@@ -238,10 +246,7 @@ private:
 	}
 	double kernel_rbf(int i, int j) const
 	{
-		return exp(-gamma*(x_square[i] + x_square[j] - 2 * dot(x[i], x[j])));			//original rbf
-		//return exp(-1 * (x_square[i] + x_square[j] - 2 * dot(x[i], x[j]) / 2 * pow(gamma,2)));	//???gaussian rbf
-		//return exp(-1 * (x_square[i] + x_square[j] - 1 * pow(dot(x[i], x[j]),0) / 2 * pow(gamma, 2)));	//???expoential rbf
-		//return exp(-1 * (x_square[i] + x_square[j] - 2 * dot(x[i], x[j]) / 20));		//??????????????
+		return exp(-gamma*(x_square[i] + x_square[j] - 2 * dot(x[i], x[j])));
 	}
 	double kernel_sigmoid(int i, int j) const
 	{
@@ -395,6 +400,12 @@ double Kernel::k_function(const svm_node *x, const svm_node *y,
 //
 class Solver {
 public:
+
+
+	double Gmax;	// 사용자 변경
+	double Gmax2;	// 사용자 변경
+	int Gmin_idx;	//사용자 변경
+
 	Solver() {};
 	virtual ~Solver() {};
 
@@ -412,7 +423,9 @@ public:
 protected:
 	int active_size;
 	schar *y;
-	double *G;		// gradient of objective function
+	double *G;		// gradient of objective function				,original
+	//double *G2;		// 변경
+
 	enum { LOWER_BOUND, UPPER_BOUND, FREE };
 	char *alpha_status;	// LOWER_BOUND, UPPER_BOUND, FREE
 	double *alpha;
@@ -422,7 +435,8 @@ protected:
 	double Cp, Cn;
 	double *p;
 	int *active_set;
-	double *G_bar;		// gradient, if we treat free variables as 0
+	double *G_bar;		// gradient, if we treat free variables as 0	,original
+	//double *G_bar2;		// 변경
 	int l;
 	bool unshrink;	// XXX
 
@@ -444,6 +458,16 @@ protected:
 	void swap_index(int i, int j);
 	void reconstruct_gradient();
 	virtual int select_working_set(int &i, int &j);
+	void function1(int a, const Qfloat* Q_i, double C_i);			//변경		사용자
+	void function2(int a, const Qfloat* Q_i, double C_i);			//변경		사용자
+	void function3(int a, const Qfloat* Q_j, double C_j);			//변경		사용자
+	void function4(int a, const Qfloat* Q_j, double C_j);			//변경		사용자
+
+	void G_function1(int a, const Qfloat* Q_i, const Qfloat* Q_j, double delta_alpha_i, double delta_alpha_j);	//변경 사용자
+
+	void select_working_function_gmax(double Gmax, int Gmax_idx);			//변경	사용자
+	void select_working_function_gmin(double Gmax, double Gmax2, double obj_diff_min, int Gmin_idx, int i, const Qfloat *Q_i);			//변경	사용자
+
 	virtual double calculate_rho();
 	virtual void do_shrinking();
 private:
@@ -480,6 +504,8 @@ void Solver::reconstruct_gradient()
 
 	if (2 * nr_free < active_size)
 		info("\nWARNING: using -h 0 may be faster\n");
+		info("_%lf_", Gmax + Gmax2);		//사용자 변경
+		info("-%d-", Gmin_idx);		//사용자 변경
 
 	if (nr_free*l > 2 * active_size*(l - active_size))
 	{
@@ -504,9 +530,14 @@ void Solver::reconstruct_gradient()
 	}
 }
 
-void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
+
+
+
+
+
+void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,		/////중요
 	double *alpha_, double Cp, double Cn, double eps,
-	SolutionInfo* si, int shrinking)
+	SolutionInfo* si, int shrinking)			//parameter->shrinking		//기본 1
 {
 	this->l = l;
 	this->Q = &Q;
@@ -518,6 +549,9 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 	this->Cn = Cn;
 	this->eps = eps;
 	unshrink = false;
+
+
+
 
 	// initialize alpha_status
 	{
@@ -536,35 +570,59 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 
 	// initialize gradient
 	{
-		G = new double[l];
-		G_bar = new double[l];
+		G = new double[l];		//G 초기화 original
+		G_bar = new double[l];	//G_bar 초기화 original
+
+		//G2 = new double[l];		//변경
+		//G_bar2 = new double[l];	//변경
+
 		int i;
 		for (i = 0; i<l; i++)
 		{
 			G[i] = p[i];
 			G_bar[i] = 0;
+			//G2[i] = p[i];		//변경
+			//G_bar2[i] = 0;		//변경
 		}
-		for (i = 0; i<l; i++)
+		for (i = 0; i<l; i++)			
 			if (!is_lower_bound(i))
 			{
 				const Qfloat *Q_i = Q.get_Q(i, l);
 				double alpha_i = alpha[i];
-				int j;
-				for (j = 0; j<l; j++)
-					G[j] += alpha_i*Q_i[j];
+				int j;	//original
+				//int j = 0;	//변경
+				for (j = 0; j<l; j++)		//변경 중요	/100000추가,	original
+					G[j] += alpha_i*Q_i[j];			//original
+				//G2[l] = { alpha_i*Q_i[j], };				//변경
+				//G[l] =+ G2[l];		//변경
+				//G2[l] = NULL;			//변경
 				if (is_upper_bound(i))
-					for (j = 0; j<l; j++)
-						G_bar[j] += get_C(i) * Q_i[j];
+					for (j = 0; j<l; j++)		//변경 중요			,	original
+						G_bar[j] += get_C(i) * Q_i[j];	//original
+					//G_bar2[l] = { get_C(i) * Q_i[j], };	//변경
+					//G_bar[l] = +G_bar2[l];		//변경
+					//G_bar2[l] = NULL;		//변경
 			}
 	}
 
-	// optimization step
+
+	// optimization step		//중요
+	
+	////////시간 관련///////////
+	clock_t start, end;
+
+	srand((unsigned int)time(NULL));
+
+	start = clock();		//변경,	시간측정
 
 	int iter = 0;
-	int max_iter = max(10000000, l>INT_MAX / 100 ? INT_MAX : 100 * l);
+	int max_iter = max(10000000, l>INT_MAX / 100 ? INT_MAX : 100 * l);		///횟수 지정, original
 	int counter = min(l, 1000) + 1;
 
-	while (iter < max_iter)
+	//int max_iter = 6000;		////변경
+	//int max_iter = 6000;	//변경		//original 
+
+	while (iter < max_iter)				//연산 오래 걸리는 부분
 	{
 		// show progress and do shrinking
 
@@ -573,16 +631,19 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 			counter = min(l, 1000);
 			if (shrinking) do_shrinking();
 			info(".");
+			info("_%lf_", Gmax + Gmax2);		//사용자 변경
+			info("-%d-", Gmin_idx);		//사용자 변경
 		}
 
 		int i, j;
-		if (select_working_set(i, j) != 0)
+		if (select_working_set(i, j) != 0)		//중요 i = 0 j = 4	//들어감
 		{
 			// reconstruct the whole gradient
 			reconstruct_gradient();
 			// reset active set size and check
 			active_size = l;
 			info("*");
+			//info("%d", iter/100);
 			if (select_working_set(i, j) != 0)
 				break;
 			else
@@ -593,8 +654,14 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 
 		// update alpha[i] and alpha[j], handle bounds carefully
 
-		const Qfloat *Q_i = Q.get_Q(i, active_size);
-		const Qfloat *Q_j = Q.get_Q(j, active_size);
+		const Qfloat *Q_i = Q.get_Q(i, active_size);		//original
+		const Qfloat *Q_j = Q.get_Q(j, active_size);		//original
+
+		//Qfloat *Q_i = Q.get_Q(i, active_size);		//변경
+		//Qfloat *Q_j = Q.get_Q(j, active_size);		//변경
+
+		//float *Q_i = Q.get_Q(i, active_size);		//변경
+		//float *Q_j = Q.get_Q(j, active_size);		//변경
 
 		double C_i = get_C(i);
 		double C_j = get_C(j);
@@ -602,7 +669,7 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 		double old_alpha_i = alpha[i];
 		double old_alpha_j = alpha[j];
 
-		if (y[i] != y[j])
+		if (y[i] != y[j])				//y[i] //1			//alpha, G업데이트 과정
 		{
 			double quad_coef = QD[i] + QD[j] + 2 * Q_i[j];
 			if (quad_coef <= 0)
@@ -645,7 +712,7 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 				}
 			}
 		}
-		else
+		else                 //y[i] //2
 		{
 			double quad_coef = QD[i] + QD[j] - 2 * Q_i[j];
 			if (quad_coef <= 0)
@@ -694,10 +761,23 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 		double delta_alpha_i = alpha[i] - old_alpha_i;
 		double delta_alpha_j = alpha[j] - old_alpha_j;
 
-		for (int k = 0; k<active_size; k++)
+		
+		std::thread G_thread1(&Solver::G_function1, this, 0, Q_i, Q_j, delta_alpha_i, delta_alpha_j);		//사용자 변경
+		std::thread G_thread2(&Solver::G_function1, this, 1, Q_i, Q_j, delta_alpha_i, delta_alpha_j);		//사용자 변경
+		std::thread G_thread3(&Solver::G_function1, this, 2, Q_i, Q_j, delta_alpha_i, delta_alpha_j);		//사용자 변경
+		
+		G_thread1.join();		//사용자 변경
+		G_thread2.join();		//사용자 변경
+		G_thread3.join();		//사용자 변경
+		
+
+		//#pragma omp parallel for
+		/*
+		for (int k = 0; k<active_size; k++)			/////original G 업그래이드 부분	//병렬 처리	
 		{
-			G[k] += Q_i[k] * delta_alpha_i + Q_j[k] * delta_alpha_j;
+			G[k] += Q_i[k] * delta_alpha_i + Q_j[k] * delta_alpha_j;		//original
 		}
+		*/
 
 		// update alpha_status and G_bar
 
@@ -710,26 +790,91 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 			if (ui != is_upper_bound(i))
 			{
 				Q_i = Q.get_Q(i, l);
-				if (ui)
-					for (k = 0; k<l; k++)
-						G_bar[k] -= C_i * Q_i[k];
-				else
-					for (k = 0; k<l; k++)
-						G_bar[k] += C_i * Q_i[k];
+				
+
+				if (ui){
+					
+					std::thread thread1(&Solver::function1, this, 0, Q_i, C_i);
+					std::thread thread2(&Solver::function1, this, 1, Q_i, C_i);
+					std::thread thread1_a(&Solver::function1, this, 2, Q_i, C_i);
+					
+					thread1.join();
+					thread2.join();
+					thread1_a.join();
+					
+					//#pragma omp parallel for
+					/*
+					for (k = 0; k<l; k++)			///original, G_bar 업그레이드 부분	//병
+					G_bar[k] -= C_i * Q_i[k];	//original*/
+				}
+				else{
+					//#pragma omp parallel for
+					/*
+					for (k = 0; k<l; k++)			///original, G_bar 업그레이드 부분	//병
+					G_bar[k] += C_i * Q_i[k];		//original
+					*/
+					
+					std::thread thread3(&Solver::function2, this, 0, Q_i, C_i);
+					std::thread thread4(&Solver::function2, this, 1, Q_i, C_i);
+					std::thread thread3_a(&Solver::function2, this, 2, Q_i, C_i);
+					
+					thread3.join();
+					thread4.join();
+					thread3_a.join();
+				}
+
+				//thread1.detach();
+				//thread2.detach();
+				//thread3.detach();
+				//thread4.detach();
 			}
 
 			if (uj != is_upper_bound(j))
 			{
 				Q_j = Q.get_Q(j, l);
-				if (uj)
-					for (k = 0; k<l; k++)
-						G_bar[k] -= C_j * Q_j[k];
-				else
-					for (k = 0; k<l; k++)
-						G_bar[k] += C_j * Q_j[k];
+				if (uj){
+					//#pragma omp parallel for
+					/*
+					for (k = 0; k<l; k++)			///original,	G_bar 업그레이드 부분	//병
+					G_bar[k] -= C_j * Q_j[k];		//original
+					*/
+					
+					std::thread thread5(&Solver::function3, this, 0, Q_j, C_j);
+					std::thread thread6(&Solver::function3, this, 1, Q_j, C_j);
+					std::thread thread5_a(&Solver::function3, this, 2, Q_j, C_j);
+					
+					thread5.join();
+					thread6.join();
+					thread5_a.join();
+					
+				}
+				else{
+					//#pragma omp parallel for
+					/*
+					for (k = 0; k < l; k++)		//original
+						G_bar[k] += C_j * Q_j[k];	///original, G_bar 업그레이드 부분	//병
+						*/
+					
+					std::thread thread7(&Solver::function4, this, 0, Q_j, C_j);
+					std::thread thread8(&Solver::function4, this, 1, Q_j, C_j);
+					std::thread thread7_a(&Solver::function4, this, 2, Q_j, C_j);
+					
+					thread7.join();
+					thread8.join();
+					thread7_a.join();
+					
+					}
 			}
+
 		}
+		
+
 	}
+
+
+
+
+
 
 	if (iter >= max_iter)
 	{
@@ -771,10 +916,20 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 	// or Q.swap_index(i,active_set[i]);
 	}*/
 
+	end = clock();				//변경, 추가
+
+
 	si->upper_bound_p = Cp;
 	si->upper_bound_n = Cn;
 
+
+
+
+
+
+
 	info("\noptimization finished, #iter = %d\n", iter);
+	info("\ntime = %.3lf sec\n", (end-start)/(double)1000);			//변경,	추가
 
 	delete[] p;
 	delete[] y;
@@ -783,9 +938,83 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,
 	delete[] active_set;
 	delete[] G;
 	delete[] G_bar;
+
+	//delete[] G2;		//변경
+	//delete[] G_bar2;	//변경
 }
 
-// return 1 if already optimal, return 0 otherwise
+
+void Solver::G_function1(int a, const Qfloat* Q_i, const Qfloat* Q_j, double delta_alpha_i, double delta_alpha_j)
+{
+	//#pragma omp parallel
+
+	//#pragma omp parallel for reduction(+:G[k])
+	for (int k = a; k < active_size;)			/////G 업그래이드 부분	//병렬 처리	
+	{
+		G[k] += Q_i[k] * delta_alpha_i + Q_j[k] * delta_alpha_j;		
+		k = 3 + k;		//사용자 변경
+	}
+}
+
+
+
+
+
+void Solver::function1(int a, const Qfloat* Q_i, double C_i)
+{
+	//#pragma omp parallel
+
+	//#pragma omp for //reduction(+:G_bar[k])
+	for (int k = a; k < l;){			///G_bar 업그레이드 부분	//병
+		//mtx_lock.lock();
+		G_bar[k] -= C_i * Q_i[k];
+		k = 3 + k;		//사용자 변경
+		//mtx_lock.unlock();
+	}
+}
+
+void Solver::function2(int a, const Qfloat* Q_i, double C_i)
+{
+	//#pragma omp parallel
+
+	//#pragma omp for //reduction(+:G_bar[k])
+	for (int k = a; k < l;){			///G_bar 업그레이드 부분	//병
+		//mtx_lock.lock();
+		G_bar[k] += C_i * Q_i[k];
+		k = 3 + k;		//사용자 변경
+		//mtx_lock.unlock();
+	}
+}
+
+
+
+
+void Solver::function3(int a, const Qfloat* Q_j, double C_j)
+{
+	//#pragma omp parallel
+
+	//#pragma omp for //reduction(+:G_bar[k])
+	for (int k = a; k < l;){			///G_bar 업그레이드 부분	//병
+		//mtx_lock.lock();
+		G_bar[k] -= C_j * Q_j[k];
+		k = 3 + k;		//사용자 변경
+		//mtx_lock.unlock();
+	}
+}
+void Solver::function4(int a, const Qfloat* Q_j, double C_j)
+{
+	//#pragma omp parallel
+
+	//#pragma omp for //reduction(+:G_bar[k])
+	for (int k = a; k < l;){			///G_bar 업그레이드 부분	//병
+		//mtx_lock.lock();
+		G_bar[k] += C_j * Q_j[k];
+		k = 3 + k;		//사용자 변경
+		//mtx_lock.unlock();
+	}
+}
+
+// return 1 if already optimal, return 0 otherwise				//중요함
 int Solver::select_working_set(int &out_i, int &out_j)
 {
 	// return i,j such that
@@ -794,13 +1023,20 @@ int Solver::select_working_set(int &out_i, int &out_j)
 	//    (if quadratic coefficeint <= 0, replace it with tau)
 	//    -y_j*grad(f)_j < -y_i*grad(f)_i, j in I_low(\alpha)
 
-	double Gmax = -INF;
-	double Gmax2 = -INF;
+	//double Gmax = -INF;	//original
+	//double Gmax2 = -INF;	//original
+	Gmax = -INF;
+	Gmax2 = -INF;
 	int Gmax_idx = -1;
-	int Gmin_idx = -1;
+	//int Gmin_idx = -1;		//original
+	Gmin_idx = -1;
 	double obj_diff_min = INF;
-
-	for (int t = 0; t<active_size; t++)
+	/*			//변경
+		std::thread Gmax_id(&Solver::select_working_function_gmax, this, Gmax, Gmax_idx);
+		Gmax_id.join();
+	*/
+	
+	for (int t = 0; t<active_size; t++)		//변경, original
 		if (y[t] == +1)
 		{
 			if (!is_upper_bound(t))
@@ -819,12 +1055,116 @@ int Solver::select_working_set(int &out_i, int &out_j)
 					Gmax_idx = t;
 				}
 		}
-
+		
 	int i = Gmax_idx;
-	const Qfloat *Q_i = NULL;
+	const Qfloat *Q_i = NULL;		//original
+	//Qfloat *Q_i = NULL;		//변경
+	//float *Q_i = NULL;			//변경
 	if (i != -1) // NULL Q_i not accessed: Gmax=-INF if i=-1
 		Q_i = Q->get_Q(i, active_size);
 
+
+
+	/////////////////////////Gmin_idx 부분			//병렬처리부분			???????
+	/*
+	{
+		std::thread Gmin_id(&Solver::select_working_function_gmin, this, Gmax, Gmax2, obj_diff_min, Gmin_idx, i, Q_i);
+		Gmin_id.join();
+	}
+	*/
+
+	for (int j = 0; j<active_size; j++)			//original
+	{
+		if (y[j] == +1)
+		{
+			if (!is_lower_bound(j))
+			{
+				double grad_diff = Gmax + G[j];
+				if (G[j] >= Gmax2)
+					Gmax2 = G[j];
+				if (grad_diff > 0)
+				{
+					double obj_diff;
+					double quad_coef = QD[i] + QD[j] - 2.0*y[i] * Q_i[j];
+					if (quad_coef > 0)
+						obj_diff = -(grad_diff*grad_diff) / quad_coef;
+					else
+						obj_diff = -(grad_diff*grad_diff) / TAU;
+
+					if (obj_diff <= obj_diff_min)
+					{
+						Gmin_idx = j;
+						obj_diff_min = obj_diff;
+					}
+				}
+			}
+		}
+		else
+		{
+			if (!is_upper_bound(j))
+			{
+				double grad_diff = Gmax - G[j];
+				if (-G[j] >= Gmax2)
+					Gmax2 = -G[j];
+				if (grad_diff > 0)
+				{
+					double obj_diff;
+					double quad_coef = QD[i] + QD[j] + 2.0*y[i] * Q_i[j];
+					if (quad_coef > 0)
+						obj_diff = -(grad_diff*grad_diff) / quad_coef;
+					else
+						obj_diff = -(grad_diff*grad_diff) / TAU;
+
+					if (obj_diff <= obj_diff_min)
+					{
+						Gmin_idx = j;
+						obj_diff_min = obj_diff;
+					}
+				}
+			}
+		}
+	}
+	
+	if (Gmax + Gmax2 < eps || Gmin_idx == -1)		//사용자 변경
+
+		//Gmax = -INF;	// 사용자 변경
+		//Gmax2 = -INF;	// 사용자 변경
+		return 1;
+
+	out_i = Gmax_idx;
+	out_j = Gmin_idx;
+	//Gmax = -INF;	// 사용자 변경
+	//Gmax2 = -INF;	// 사용자 변경
+	return 0;
+}
+
+
+void Solver::select_working_function_gmax(double Gmax, int Gmax_idx)			//변경	사용자
+{
+	for (int t = 0; t < active_size; t++){		//변경, original
+		if (y[t] == +1)
+		{
+			if (!is_upper_bound(t))
+				if (-G[t] >= Gmax)
+				{
+					Gmax = -G[t];
+					Gmax_idx = t;
+				}
+		}
+		else
+		{
+			if (!is_lower_bound(t))
+				if (G[t] >= Gmax)
+				{
+					Gmax = G[t];
+					Gmax_idx = t;
+				}
+		}
+	}
+}
+
+void Solver::select_working_function_gmin(double Gmax, double Gmax2, double obj_diff_min, int Gmin_idx, int i, const Qfloat *Q_i)			//변경	사용자
+{
 	for (int j = 0; j<active_size; j++)
 	{
 		if (y[j] == +1)
@@ -876,14 +1216,12 @@ int Solver::select_working_set(int &out_i, int &out_j)
 			}
 		}
 	}
-
-	if (Gmax + Gmax2 < eps || Gmin_idx == -1)
-		return 1;
-
-	out_i = Gmax_idx;
-	out_j = Gmin_idx;
-	return 0;
 }
+
+
+
+
+
 
 bool Solver::be_shrunk(int i, double Gmax1, double Gmax2)
 {
@@ -942,7 +1280,8 @@ void Solver::do_shrinking()
 		}
 	}
 
-	if (unshrink == false && Gmax1 + Gmax2 <= eps * 10)
+	if (unshrink == false && Gmax1 + Gmax2 <= eps * 10)		//original			//사용자
+	//if (unshrink == false && Gmax1 + Gmax2 <= eps * 1000)		//변경			//사용자
 	{
 		unshrink = true;
 		reconstruct_gradient();
@@ -953,7 +1292,11 @@ void Solver::do_shrinking()
 	for (i = 0; i<active_size; i++)
 		if (be_shrunk(i, Gmax1, Gmax2))
 		{
-			active_size--;
+			active_size--;		//original
+			//active_size--;		//변경
+			//active_size--;		//변경
+			//active_size--;		//변경
+			//active_size--;		//변경
 			while (active_size > i)
 			{
 				if (!be_shrunk(active_size, Gmax1, Gmax2))
@@ -961,7 +1304,11 @@ void Solver::do_shrinking()
 					swap_index(i, active_size);
 					break;
 				}
-				active_size--;
+				active_size--;		//original
+				//active_size--;		//변경
+				//active_size--;		//변경
+				//active_size--;		//변경
+				//active_size--;		//변경
 			}
 		}
 }
@@ -1266,7 +1613,7 @@ double Solver_NU::calculate_rho()
 //
 // Q matrices for various formulations
 //
-class SVC_Q : public Kernel
+class SVC_Q : public Kernel													//////////////중요 
 {
 public:
 	SVC_Q(const svm_problem& prob, const svm_parameter& param, const schar *y_)
@@ -1281,12 +1628,19 @@ public:
 
 	Qfloat *get_Q(int i, int len) const
 	{
-		Qfloat *data;
+		Qfloat *data;	//변경,	//original null 없음
+		//Qfloat *data2;		//변경 추가
 		int start, j;
+		int k_start;			//int	//변경
+		//cache->get_data(i, &data2, len);		//변경
 		if ((start = cache->get_data(i, &data, len)) < len)
 		{
-			for (j = start; j<len; j++)
-				data[j] = (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j));
+			k_start = start;		//변경
+			for (j = start; j<len; j++)			//변경 중요 original
+				data[j] = (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j));	//original
+			//data2[len] = { (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j)), };	//변경
+			//data[len] = +data2[len];	//변경
+			//data2[len] = NULL;	//변경
 		}
 		return data;
 	}
@@ -1444,7 +1798,7 @@ static void solve_c_svc(
 	const svm_problem *prob, const svm_parameter* param,
 	double *alpha, Solver::SolutionInfo* si, double Cp, double Cn)
 {
-	int l = prob->l;
+	int l = prob->l;		//			prob->l 전체 길이  prob->y 는 1또는 -1 prob->x		index는1,2,3,4,6,7 value는 0.37931,0.310345,0.327869,0.66667
 	double *minus_ones = new double[l];
 	schar *y = new schar[l];
 
@@ -1457,7 +1811,9 @@ static void solve_c_svc(
 		if (prob->y[i] > 0) y[i] = +1; else y[i] = -1;
 	}
 
-	Solver s;
+
+	/////////////////////////////
+	Solver s;		///////변경
 	s.Solve(l, SVC_Q(*prob, *param, y), minus_ones, y,
 		alpha, Cp, Cn, param->eps, si, param->shrinking);
 
@@ -1470,7 +1826,23 @@ static void solve_c_svc(
 
 	for (i = 0; i<l; i++)
 		alpha[i] *= y[i];
+	/*
+	//////////////////////////////변경/////////
+	Solver s2;		//////변경
+	s2.Solve(l, SVC_Q(*prob, *param, y), minus_ones, y,
+		alpha, Cp, Cn, param->eps, si, param->shrinking);
 
+	double sum_alpha = 0;
+	for (i = 0; i<l; i++)
+		sum_alpha += alpha[i];
+
+	if (Cp == Cn)
+		info("nu = %f\n", sum_alpha / (Cp*prob->l));
+
+	for (i = 0; i<l; i++)
+		alpha[i] *= y[i];
+	/////////////////////////////////////////////
+	*/
 	delete[] minus_ones;
 	delete[] y;
 }
@@ -1697,6 +2069,7 @@ static decision_function svm_train_one(
 	}
 
 	info("nSV = %d, nBSV = %d\n", nSV, nBSV);
+
 
 	decision_function f;
 	f.alpha = alpha;
@@ -2156,9 +2529,9 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 		if (nr_class == 1)
 			info("WARNING: training data in only one class. See README for details.\n");
 
-		svm_node **x = Malloc(svm_node *, l);
+		svm_node **x = Malloc(svm_node *, l);	
 		int i;
-		for (i = 0; i<l; i++)
+		for (i = 0; i<l; i++)					/////////////////////////////////중요
 			x[i] = prob->x[perm[i]];
 
 		// calculate weighted C
@@ -2192,6 +2565,8 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 			probB = Malloc(double, nr_class*(nr_class - 1) / 2);
 		}
 
+
+
 		int p = 0;
 		for (i = 0; i<nr_class; i++)
 			for (int j = i + 1; j<nr_class; j++)
@@ -2203,12 +2578,12 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 				sub_prob.x = Malloc(svm_node *, sub_prob.l);
 				sub_prob.y = Malloc(double, sub_prob.l);
 				int k;
-				for (k = 0; k<ci; k++)
+				for (k = 0; k<ci; k++)		/////2		???1
 				{
 					sub_prob.x[k] = x[si + k];
 					sub_prob.y[k] = +1;
 				}
-				for (k = 0; k<cj; k++)
+				for (k = 0; k<cj; k++)		/////3		????-1
 				{
 					sub_prob.x[ci + k] = x[sj + k];
 					sub_prob.y[ci + k] = -1;
@@ -2319,6 +2694,18 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 						model->sv_coef[i][q++] = f[p].alpha[ci + k];
 				++p;
 			}
+
+		////////////////진행 과정 저장 부분 ////////////
+		for(int ho = 0; ho < 3; ++ho)
+		{
+			return model;
+		}
+
+
+
+
+
+
 
 		free(label);
 		free(probA);
@@ -2641,7 +3028,7 @@ static const char *kernel_type_table[] =
 	"linear", "polynomial", "rbf", "sigmoid", "precomputed", NULL
 };
 
-int svm_save_model(const char *model_file_name, const svm_model *model)
+int svm_save_model(const char *model_file_name, const svm_model *model)			//파일 저장하는 부분
 {
 	FILE *fp = fopen(model_file_name, "w");
 	if (fp == NULL) return -1;
@@ -2733,7 +3120,8 @@ int svm_save_model(const char *model_file_name, const svm_model *model)
 
 	setlocale(LC_ALL, old_locale);
 	free(old_locale);
-
+	//fp = NULL;	//변경
+	//free(fp);		//변경
 	if (ferror(fp) != 0 || fclose(fp) != 0) return -1;
 	else return 0;
 }
@@ -3171,4 +3559,3 @@ void svm_set_print_string_function(void(*print_func)(const char *))
 	else
 		svm_print_string = print_func;
 }
-
