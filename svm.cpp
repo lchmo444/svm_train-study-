@@ -2404,7 +2404,7 @@ static double svm_svr_probability(
 
 
 // label: label name, start: begin of each class, count: #data of classes, perm: indices to the original data
-// perm, length l, must be allocated before calling this subroutine
+// perm, length l, must be allocated before calling this subroutine		//클래스 분류 부분
 static void svm_group_classes(const svm_problem *prob, int *nr_class_ret, int **label_ret, int **start_ret, int **count_ret, int *perm)
 {
 	int l = prob->l;
@@ -2584,7 +2584,7 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 		}
 
 
-
+		//////nr_class 는 2로 나뉩니다. 두개로 분류할때
 		int p = 0;
 		for (i = 0; i<nr_class; i++)
 			for (int j = i + 1; j<nr_class; j++)
