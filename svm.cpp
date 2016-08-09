@@ -1,4 +1,4 @@
-#include <math.h>
+﻿#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -72,10 +72,13 @@ static void info(const char *fmt, ...) {}
 // l is the number of total data items
 // size is the cache size limit in bytes
 //
+
+
 class Cache
 {
 public:
-	Cache(int l, long int size);
+	Cache(int l, long int size);	//original
+	//Cache(int l, long long int size);	//변경
 	~Cache();
 
 	// request data [0,len)
@@ -83,9 +86,12 @@ public:
 	// (p >= len if nothing needs to be filled)
 	int get_data(const int index, Qfloat **data, int len);
 	void swap_index(int i, int j);
+
+	
 private:
 	int l;
-	long int size;
+	long int size;	//original
+	//long long int size;	//변경
 	struct head_t
 	{
 		head_t *prev, *next;	// a circular list
@@ -99,12 +105,13 @@ private:
 	void lru_insert(head_t *h);
 };
 
-Cache::Cache(int l_, long int size_) :l(l_), size(size_)
+Cache::Cache(int l_, long int size_) :l(l_), size(size_)	//original
+//Cache::Cache(int l_,long int size_) : l(l_), size(size_)
 {
 	head = (head_t *)calloc(l, sizeof(head_t));	// initialized to 0
 	size /= sizeof(Qfloat);
 	size -= l * sizeof(head_t) / sizeof(Qfloat);
-	size = max(size, 2 * (long int)l);	// cache must be large enough for two columns
+	size = max(size, 2 * (long int)l);	// cache must be large enough for two columns	//original
 	lru_head.next = lru_head.prev = &lru_head;
 }
 
@@ -135,21 +142,28 @@ int Cache::get_data(const int index, Qfloat **data, int len)
 {
 	head_t *h = &head[index];
 	if (h->len) lru_delete(h);
-	int more = len - h->len;
+	int more = len - h->len;		//처음에는 총 길이 에서 인덱스 길이를 뺸다.
 
 	if (more > 0)
 	{
 		// free old space
-		while (size < more)
+		//사용자 변경
+		//#pragma omp parallel firstprivate()
 		{
-			head_t *old = lru_head.next;
-			lru_delete(old);
-			free(old->data);
-			size += old->len;
-			old->data = 0;
-			old->len = 0;
-		}
+			//#pragma omp single
+			while (size < more)	//original		//size가 크면 while문 실행 안됨
+				//for(more;  size < more;more)
+			{
+				head_t *old = lru_head.next;
+				lru_delete(old);
+				free(old->data);
 
+				//#pragma omp task
+				size += old->len;
+				old->data = 0;
+				old->len = 0;
+			}
+		}
 		// allocate new space
 		h->data = (Qfloat *)realloc(h->data, sizeof(Qfloat)*len);
 		size -= more;
@@ -616,10 +630,10 @@ void Solver::Solve(int l, const QMatrix& Q, const double *p_, const schar *y_,		
 	start = clock();		//변경,	시간측정
 
 	int iter = 0;
-	int max_iter = max(10000000, l>INT_MAX / 100 ? INT_MAX : 100 * l);		///횟수 지정, original
+	//int max_iter = max(10000000, l>INT_MAX / 100 ? INT_MAX : 100 * l);		///횟수 지정, original
 	int counter = min(l, 1000) + 1;
 
-	//int max_iter = 6000;		////변경
+	int max_iter = 6000;		////변경
 	//int max_iter = 6000;	//변경		//original 
 
 	while (iter < max_iter)				//연산 오래 걸리는 부분
@@ -1620,7 +1634,7 @@ public:
 		:Kernel(prob.l, prob.x, param)
 	{
 		clone(y, y_, prob.l);
-		cache = new Cache(prob.l, (long int)(param.cache_size*(1 << 20)));
+		cache = new Cache(prob.l, (long int)(param.cache_size*(1 << 20)));		//cache 관련부분
 		QD = new double[prob.l];
 		for (int i = 0; i<prob.l; i++)
 			QD[i] = (this->*kernel_function)(i, i);
@@ -1636,11 +1650,15 @@ public:
 		if ((start = cache->get_data(i, &data, len)) < len)
 		{
 			k_start = start;		//변경
-			for (j = start; j<len; j++)			//변경 중요 original
-				data[j] = (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j));	//original
-			//data2[len] = { (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j)), };	//변경
-			//data[len] = +data2[len];	//변경
-			//data2[len] = NULL;	//변경
+			//#pragma omp parallel			//변경 부분
+			{
+				//#pragma omp for
+				for (j = start; j < len; j++)			//변경 중요 original
+					data[j] = (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j));	//original
+				//data2[len] = { (Qfloat)(y[i] * y[j] * (this->*kernel_function)(i, j)), };	//변경
+				//data[len] = +data2[len];	//변경
+				//data2[len] = NULL;	//변경
+			}
 		}
 		return data;
 	}
@@ -2592,7 +2610,7 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 				if (param->probability)
 					svm_binary_svc_probability(&sub_prob, param, weighted_C[i], weighted_C[j], probA[p], probB[p]);
 
-				f[p] = svm_train_one(&sub_prob, param, weighted_C[i], weighted_C[j]);
+				f[p] = svm_train_one(&sub_prob, param, weighted_C[i], weighted_C[j]);		//시작부분(반복문)
 				for (k = 0; k<ci; k++)
 					if (!nonzero[si + k] && fabs(f[p].alpha[k]) > 0)
 						nonzero[si + k] = true;

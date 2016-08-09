@@ -1,4 +1,4 @@
-#include <stdio.h>
+﻿#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -104,9 +104,9 @@ int main(int argc, char **argv)
 
 	///////////////////////////////////////////////////////////
 	/////사용자 임의로 넣어 준 부분 // input 및 output 파일 들
-	string in_f = "\C:\\Users\\lee\\Desktop\\lee_chung_keun\\SVM material\\svm-train\\ConsoleApplication1\\Debug\\train.scale";
+	string in_f = "\C:\\Users\\lee\\Desktop\\lee_chung_keun\\SVM material\\svm-train\\ConsoleApplication1\\Debug\\train_1200000_minimal_mini.scale";
 	/*사용자 임의 폴더_1*/
-	//string in_f = "\C:\\lee\\train.scale";
+	//string in_f = "\C:\\lee\\train_1200000_minimal.scale";
 
 
 	char * input_file_name = new char[in_f.length() + 1];
