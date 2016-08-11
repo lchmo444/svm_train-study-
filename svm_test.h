@@ -16,6 +16,8 @@ struct svm_parameter
 	double* weight;
 	int shrinking;
 	int probability;		/*do probability estimates */
+	double coef0;	/* for poly/sigmoid */
+
 };
 
 struct svm_model
@@ -24,15 +26,15 @@ struct svm_model
 	int nr_class;				/*number of classes	*/
 	int l;						/*total #SV	*/
 	struct svm_node **SV;		/*Svs (SV[l])	*/
-	double **sv_coef;			
-	double *rho;
-	double *probA;
+	double **sv_coef;			/* coefficients for SVs in decision functions (sv_coef[k-1][l]) */
+	double *rho;				/* constants in decision functions (rho[k*(k-1)/2]) */
+	double *probA;				/* pariwise probability information */
 	double *probB;
-	int *sv_indices;
+	int *sv_indices;			 /* sv_indices[0,...,nSV-1] are values in [1,...,num_traning_data] to indicate SVs in the training set */
 
-	int *label;
-	int *nSV;
-	int free_sv;
+	int *label;					/* label of each class (label[k]) */
+	int *nSV;					/* number of SVs for each class (nSV[k]) */
+	int free_sv;				/* 1 if svm_model is created by svm_load_model*/
 };
 
 struct svm_problem
@@ -46,4 +48,18 @@ struct svm_node
 {
 	int index;
 	double value;
+};
+
+struct decision_function
+{
+	double *alpha;
+	double rho;
+};
+
+struct SolutionInfo {
+	double obj;
+	double rho;
+	double upper_bound_p;
+	double upper_bound_n;
+	double r;	// for Solver_NU
 };
